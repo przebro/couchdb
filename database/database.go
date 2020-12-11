@@ -1,143 +1,98 @@
 package database
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"reflect"
-	"strings"
 
-	"github.com/przebro/couchdb/context"
-	"github.com/przebro/couchdb/query"
+	"github.com/przebro/couchdb/client"
 	"github.com/przebro/couchdb/request"
 	"github.com/przebro/couchdb/response"
 )
 
-const (
-	endPointFind = "_find"
-	endPointBulk = "_bulk_docs"
-)
-
-var (
-	errNilSelector     = errors.New("nil selector specified")
-	errInvalidDocKind  = errors.New("invalid kind of document, not a ptr to slice, or not a ptr to struct")
-	errEmptyDocumentID = errors.New("document id cannot be empty")
-)
-
-type responseDocument struct {
-	Documents map[string]*json.RawMessage `json:"docs"`
-}
-
-type arrrayDocument struct {
-	Documents []interface{} `json:"docs"`
-}
-
-//CouchDatabase - Represents a CouchDB database
-type CouchDatabase struct {
-	Name string
-	Ctx  *context.CouchContext
-}
-
 //CreateDatabase - Creates new database
-func CreateDatabase(name string, ctx *context.CouchContext) (response.CouchResult, CouchDatabase, error) {
+func CreateDatabase(ctx context.Context, name string, cli *client.CouchClient) (*response.CouchResult, CouchDatabase, error) {
 
 	var database CouchDatabase
 	builder := request.NewRequestBuilder()
 
-	request, err := builder.WithMethod(request.MethodPut).WithEndpoint(name).Build(ctx)
+	request, err := builder.WithMethod(request.MethodPut).WithEndpoint(name).Build(cli)
 	if err != nil {
-		return response.CouchResult{}, database, err
+		return nil, database, err
 	}
-	response, err := request.Execute()
+	rs, err := request.Execute(ctx)
 
 	if err == nil {
-		database.Ctx = ctx
+		database.cli = cli
 		database.Name = name
 
 	}
-	return response.CouchResult, database, err
 
+	return response.NewResult(rs.CouchStatus, rs.Rdr), database, err
 }
 
 //GetDatabsase - Gets database
-func GetDatabsase(name string, ctx *context.CouchContext) (response.CouchResult, CouchDatabase, error) {
+func GetDatabsase(ctx context.Context, name string, cli *client.CouchClient) (*response.CouchResult, CouchDatabase, error) {
 
 	var database CouchDatabase
 	builder := request.NewRequestBuilder()
 
-	request, err := builder.WithMethod(request.MethodGet).WithEndpoint(name).Build(ctx)
+	request, err := builder.WithMethod(request.MethodGet).WithEndpoint(name).Build(cli)
 	if err != nil {
-		return response.CouchResult{}, database, err
+		return nil, database, err
 	}
-	response, err := request.Execute()
+	rs, err := request.Execute(ctx)
 
 	if err == nil {
-		database.Ctx = ctx
+		database.cli = cli
 		database.Name = name
 
 	}
-	return response.CouchResult, database, err
+	return response.NewResult(rs.CouchStatus, rs.Rdr), database, err
 
 }
 
 //Get - Gets a single document with given id
-func (db *CouchDatabase) Get(id string, doc interface{}) (response.CouchResult, error) {
+func (db *CouchDatabase) Get(ctx context.Context, id string) (*response.CouchResult, error) {
 
 	if id == "" {
 		return nil, errEmptyDocumentID
 	}
 
-	if !isValidStruct(doc) {
-		return nil, errInvalidDocKind
-	}
-
 	endpoint := fmt.Sprintf("%s/%s", db.Name, id)
 	rqb := request.NewRequestBuilder()
 
-	request, err := rqb.WithEndpoint(endpoint).WithMethod(request.MethodGet).Build(db.Ctx)
+	request, err := rqb.WithEndpoint(endpoint).WithMethod(request.MethodGet).Build(db.cli)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := request.Execute()
-	if err != nil {
-		return result.CouchResult, err
-	}
+	rs, err := request.Execute(ctx)
 
-	err = json.Unmarshal(result.Body, doc)
-
-	return result.CouchResult, err
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 }
 
-func (db *CouchDatabase) Stat() (response.CouchResult, error) {
+//Stat -returns details about current database
+func (db *CouchDatabase) Stat(ctx context.Context) (*response.CouchResult, error) {
 
 	builder := request.NewRequestBuilder()
 
-	request, err := builder.WithMethod(request.MethodGet).WithEndpoint(db.Name).Build(db.Ctx)
+	request, err := builder.WithMethod(request.MethodGet).WithEndpoint(db.Name).Build(db.cli)
 	if err != nil {
-		return response.CouchResult{}, err
+		return nil, err
 	}
-	rs, err := request.Execute()
+	rs, err := request.Execute(ctx)
 
-	if err == nil {
-		rs.CouchResult[response.ResultMessage] = rs.Body
-	}
-
-	return rs.CouchResult, err
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 }
 
 //Select - Selects documents from database
-func (db *CouchDatabase) Select(doc interface{}, sel string, fld []string, opt map[string]string) (response.CouchResult, error) {
+func (db *CouchDatabase) Select(ctx context.Context, sel string, fld []string, opt map[string]string) (*response.CouchMultiResult, error) {
 
 	if sel == "" {
 		return nil, errNilSelector
 	}
-
-	if !isValidSlice(doc) {
-		return nil, errInvalidDocKind
-	}
-
-	query := query.Data{
+	query := DataSelector{
 		Selector: []byte(sel),
 		Fields:   fld,
 	}
@@ -147,32 +102,19 @@ func (db *CouchDatabase) Select(doc interface{}, sel string, fld []string, opt m
 	endpoint := fmt.Sprintf("%s/%s", db.Name, endPointFind)
 	rqb := request.NewRequestBuilder()
 
-	request, err := rqb.WithEndpoint(endpoint).WithMethod(request.MethodPost).WithBody(selct).Build(db.Ctx)
+	request, err := rqb.WithEndpoint(endpoint).WithMethod(request.MethodPost).WithBody(selct).Build(db.cli)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := request.Execute()
-	if err != nil {
-		return result.CouchResult, err
-	}
-	rawdoc, err := extractDocFromBody(result.Body)
-	if err != nil {
-		return result.CouchResult, err
-	}
+	rs, err := request.Execute(ctx)
 
-	err = json.Unmarshal(*rawdoc.Documents["docs"], doc)
-
-	return result.CouchResult, err
+	return response.NewMultiResult(rs.CouchStatus, rs.Rdr, &selectCursor{rdr: rs.Rdr}), err
 
 }
 
 //Insert - Inserts a new document to databsase
-func (db *CouchDatabase) Insert(doc interface{}) (response.CouchResult, error) {
-
-	//Insert with existing id and rev makes and modified fileds makes an new revision
-	//insert existing  without rev returns error
-	//Insert without id creates new document even if rev is specified
+func (db *CouchDatabase) Insert(ctx context.Context, doc interface{}) (*response.CouchResult, error) {
 
 	id, _, err := requiredFields(doc)
 	if err != nil {
@@ -192,24 +134,28 @@ func (db *CouchDatabase) Insert(doc interface{}) (response.CouchResult, error) {
 	}()
 
 	rqb := request.NewRequestBuilder()
-	rq, err := rqb.WithEndpoint(endpoint).WithMethod(method).WithBody(data).Build(db.Ctx)
+	rq, err := rqb.WithEndpoint(endpoint).WithMethod(method).WithBody(data).Build(db.cli)
 	if err != nil {
 		return nil, err
 	}
 
-	rs, err := rq.Execute()
-	if err == nil {
-		rs.CouchResult[response.ResultMessage] = rs.Body
-	}
+	rs, err := rq.Execute(ctx)
 
-	return rs.CouchResult, err
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 
 }
 
-func (db *CouchDatabase) InsertMany(docs []interface{}) (response.CouchResult, error) {
+/*InsertMany - Inserts document in bulk - this method does not validate if every document contains
+_rev and _id, it only checks if elements are structs so make sure to add these fields.
+*/
+func (db *CouchDatabase) InsertMany(ctx context.Context, docs []interface{}) (*response.CouchResult, error) {
 
 	endpoint := fmt.Sprintf("%s/%s", db.Name, endPointBulk)
 	rqb := request.NewRequestBuilder()
+	if valid := isSliceOfStructs(docs); !valid {
+		return nil, errInvalidDocKind
+
+	}
 
 	arr := arrrayDocument{Documents: docs}
 
@@ -218,43 +164,35 @@ func (db *CouchDatabase) InsertMany(docs []interface{}) (response.CouchResult, e
 		return nil, err
 	}
 
-	rq, err := rqb.WithEndpoint(endpoint).WithMethod(request.MethodPost).WithBody(data).Build(db.Ctx)
+	rq, err := rqb.WithEndpoint(endpoint).WithMethod(request.MethodPost).WithBody(data).Build(db.cli)
 	if err != nil {
 		return nil, err
 	}
 
-	rs, err := rq.Execute()
+	rs, err := rq.Execute(ctx)
 
-	if err == nil {
-		rs.CouchResult[response.ResultMessage] = rs.Body
-	}
-
-	return rs.CouchResult, err
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 }
 
 //Revision - Gets all revisions of the document
-func (db *CouchDatabase) Revision(id string) (response.CouchResult, error) {
+func (db *CouchDatabase) Revision(ctx context.Context, id string) (*response.CouchResult, error) {
 
 	endpoint := fmt.Sprintf("%s/%s", db.Name, id)
 	rqb := request.NewRequestBuilder()
 
-	request, err := rqb.WithEndpoint(endpoint).WithParameters(map[string]string{"revs": "true"}).
-		WithMethod(request.MethodGet).Build(db.Ctx)
+	rq, err := rqb.WithEndpoint(endpoint).WithParameters(map[string]string{"revs": "true"}).
+		WithMethod(request.MethodGet).Build(db.cli)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := request.Execute()
-	if err != nil {
-		return nil, err
-	}
-	fmt.Println(result)
+	rs, err := rq.Execute(ctx)
 
-	return result.CouchResult, nil
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 }
 
 //Update - Updates document
-func (db *CouchDatabase) Update(doc interface{}) (response.CouchResult, error) {
+func (db *CouchDatabase) Update(ctx context.Context, doc interface{}) (*response.CouchResult, error) {
 
 	id, rev, err := requiredFields(doc)
 	if err != nil {
@@ -262,7 +200,7 @@ func (db *CouchDatabase) Update(doc interface{}) (response.CouchResult, error) {
 	}
 
 	if id == "" || rev == "" {
-		return nil, errors.New("id and rev fields are required")
+		return nil, errIDandRevRequired
 	}
 
 	data, err := json.Marshal(doc)
@@ -273,109 +211,101 @@ func (db *CouchDatabase) Update(doc interface{}) (response.CouchResult, error) {
 	endpoint := fmt.Sprintf("%s/%s", db.Name, id)
 	rqb := request.NewRequestBuilder()
 
-	request, err := rqb.WithEndpoint(endpoint).WithBody(data).
-		WithMethod(request.MethodPut).Build(db.Ctx)
+	rq, err := rqb.WithEndpoint(endpoint).WithBody(data).
+		WithMethod(request.MethodPut).Build(db.cli)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := request.Execute()
-	return result.CouchResult, err
-}
-
-//Copy - Creates a new copy of a document
-func (db *CouchDatabase) Copy(doc []byte) {
-	//COPY /recipes/SpaghettiWithMeatballs
-
+	rs, err := rq.Execute(ctx)
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 }
 
 /*Delete - Deletes a document from the database. Note that calling this method will
 mark the document as _delete and leaves a tombstone. To completely remove the document a purge method should be called.
 See the CouchDB documentation for more details.
 */
-func (db *CouchDatabase) Delete(doc interface{}) (response.CouchResult, error) {
-
-	id, rev, err := requiredFields(doc)
-	if err != nil {
-		return nil, err
-	}
+func (db *CouchDatabase) Delete(ctx context.Context, id, rev string) (*response.CouchResult, error) {
 
 	if id == "" || rev == "" {
-		return nil, errors.New("id and rev fields are required")
+		return nil, errIDandRevRequired
 	}
 
 	endpoint := fmt.Sprintf("%s/%s", db.Name, id)
 	rqb := request.NewRequestBuilder()
 
-	request, err := rqb.WithEndpoint(endpoint).WithMethod(request.MethodDelete).WithParameters(map[string]string{"rev": rev}).Build(db.Ctx)
+	rq, err := rqb.WithEndpoint(endpoint).WithMethod(request.MethodDelete).WithParameters(map[string]string{"rev": rev}).Build(db.cli)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := request.Execute()
-	return result.CouchResult, err
+	rs, err := rq.Execute(ctx)
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 
 }
 
-func (db *CouchDatabase) Purge(doc interface{}) {
+//Copy - Creates a new copy of a document
+func (db *CouchDatabase) Copy(ctx context.Context, id, destID, destREV string) (*response.CouchResult, error) {
+
+	if id == "" {
+		return nil, errRequiredDocumentID
+	}
+
+	if destID == "" {
+		return nil, errRequiredestinationID
+	}
+
+	headers := map[string]string{"Destination": destID}
+
+	qParams := map[string]string{}
+
+	if destREV != "" {
+		qParams["rev"] = destREV
+	}
+
+	endpoint := fmt.Sprintf("%s/%s", db.Name, id)
+	rqb := request.NewRequestBuilder()
+	rq, err := rqb.WithEndpoint(endpoint).WithParameters(qParams).WithMethod(request.MethodCopy).
+		WithHeaders(headers).
+		Build(db.cli)
+	if err != nil {
+		return nil, err
+	}
+
+	rs, err := rq.Execute(ctx)
+
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 
 }
 
-//isValidSlice - Checks if dcoument is a pointer to slice of a struct
-func isValidSlice(doc interface{}) bool {
+//Purge - Purges revisions from document with a given id
+func (db *CouchDatabase) Purge(ctx context.Context, id string, rev []string) (*response.CouchResult, error) {
 
-	v := reflect.ValueOf(doc)
-	if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Slice {
-		return false
-	}
-	tp := v.Elem().Type()
-
-	if tp.Elem().Kind() != reflect.Struct {
-		return false
-	}
-	return true
-}
-
-func isValidStruct(doc interface{}) bool {
-
-	v := reflect.ValueOf(doc)
-	if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Struct {
-		return false
-	}
-	return true
-}
-
-func requiredFields(doc interface{}) (string, string, error) {
-
-	var id string
-	var rev string
-	if !isValidStruct(doc) {
-		return id, rev, errInvalidDocKind
-	}
-	v := reflect.ValueOf(doc).Elem()
-
-	for i := 0; i < v.NumField(); i++ {
-
-		str, exists := v.Type().Field(i).Tag.Lookup("json")
-		if exists {
-
-			if strings.HasPrefix(str, "_id") && v.Field(i).Kind() == reflect.String {
-				id = v.Field(i).Interface().(string)
-			}
-
-			if strings.HasPrefix(str, "_rev") && v.Field(i).Kind() == reflect.String {
-				rev = v.Field(i).Interface().(string)
-			}
-		}
+	if id == "" {
+		return nil, errEmptyDocumentID
 	}
 
-	return id, rev, nil
-}
+	if rev == nil || len(rev) == 0 {
+		return nil, errRevListRequired
+	}
 
-func extractDocFromBody(raw []byte) (responseDocument, error) {
+	pdocs := map[string][]string{id: rev}
+	data, err := json.Marshal(&pdocs)
+	if err != nil {
+		return nil, err
+	}
 
-	rdoc := responseDocument{}
-	err := json.Unmarshal(raw, &rdoc.Documents)
-	return rdoc, err
+	endpoint := fmt.Sprintf("%s/%s", db.Name, endPointPurge)
+	rqb := request.NewRequestBuilder()
+	rq, err := rqb.WithEndpoint(endpoint).WithMethod(request.MethodPost).
+		WithBody(data).
+		Build(db.cli)
 
+	if err != nil {
+		return nil, err
+	}
+
+	rs, err := rq.Execute(ctx)
+
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 }

@@ -1,28 +1,61 @@
 package response
 
 import (
+	"encoding/json"
+	"io"
+	"io/ioutil"
 	"net/http"
+
+	"github.com/przebro/couchdb/cursor"
 )
 
-/*ResultKey - A key for a value stored in a CouchResult. It is not guaranteed that every result will contain
-the same set of a key-value pair, for instance, requests that end up successfully will not contain an error key.
-*/
-type ResultKey string
-
-//Keys for data returned by CoucDB
-const (
-	ResponseStatusCode ResultKey = "code"
-	ResponseStatus     ResultKey = "status"
-	ResponseServer     ResultKey = "server"
-	ResultMessage      ResultKey = "result"
-)
+//CouchStatus  - Contains http response status and additional info
+type CouchStatus struct {
+	Code   int
+	Status string
+	Server string
+}
 
 //CouchResult - Contains data returned in response
-type CouchResult map[ResultKey]interface{}
+type CouchResult struct {
+	*CouchStatus
+	rdr io.ReadCloser
+}
 
-//CouchResponse - Wraps CouchResult and returned cookie
+//NewResult - creates a new CouchResult, an object that wraps Requests status and body readcloser.
+func NewResult(status *CouchStatus, rdr io.ReadCloser) *CouchResult {
+
+	return &CouchResult{CouchStatus: status, rdr: rdr}
+}
+
+//Decode - Reads from response body and unmarshal datac into v
+func (r *CouchResult) Decode(v interface{}) error {
+
+	data, err := ioutil.ReadAll(r.rdr)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, v)
+}
+
+//CouchMultiResult - Conttains data returned in response. this struct is useful when a body contains
+//multiple objects like a result of a _find
+type CouchMultiResult struct {
+	*CouchStatus
+	rdr io.ReadCloser
+	cursor.ResultCursor
+}
+
+//NewMultiResult - Creates a new CouchMultiResult
+func NewMultiResult(status *CouchStatus, rdr io.ReadCloser, crsr cursor.ResultCursor) *CouchMultiResult {
+
+	return &CouchMultiResult{CouchStatus: status, rdr: rdr, ResultCursor: crsr}
+
+}
+
+//CouchResponse - Wraps CouchStatus and returned cookie
 type CouchResponse struct {
-	CouchResult
+	*CouchStatus
+	Rdr    io.ReadCloser
 	Cookie http.Cookie
-	Body   []byte
 }

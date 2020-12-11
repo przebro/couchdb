@@ -1,12 +1,12 @@
 package connection
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
-	"github.com/przebro/couchdb/context"
+	"github.com/przebro/couchdb/client"
 	"github.com/przebro/couchdb/request"
 	"github.com/przebro/couchdb/response"
 )
@@ -21,37 +21,32 @@ const (
 
 //Connection - Represents server connection
 type Connection struct {
-	ctx *context.CouchContext
+	cli *client.CouchClient
 }
 
-//GetContext - Returns context
-func (c *Connection) GetContext() *context.CouchContext {
-	return c.ctx
+//GetClient - Returns context
+func (c *Connection) GetClient() *client.CouchClient {
+	return c.cli
 }
 
 //GetSession - Gets a session information
-func (c *Connection) GetSession() (response.CouchResult, error) {
+func (c *Connection) GetSession(ctx context.Context) (*response.CouchResult, error) {
 
 	b := request.NewRequestBuilder()
-	rq, err := b.WithEndpoint(endPointSession).WithMethod(request.MethodGet).Build(c.ctx)
+	rq, err := b.WithEndpoint(endPointSession).WithMethod(request.MethodGet).Build(c.cli)
 	if err != nil {
-		return response.CouchResult{}, err
+		return nil, err
 	}
-	rs, err := rq.Execute()
+	rs, err := rq.Execute(ctx)
 
-	if err == nil {
-		rs.CouchResult[response.ResultMessage] = strings.Trim(string(rs.Body), "\r\n")
-
-	}
-
-	return rs.CouchResult, err
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 
 }
 
 /*Session - Establishes a new session. If successful then the returned cookie will be atached to context making it possible to call
 db specific endpoints.
 */
-func (c *Connection) Session(user, password string) (response.CouchResult, error) {
+func (c *Connection) Session(ctx context.Context, user, password string) (*response.CouchResult, error) {
 
 	b := request.NewRequestBuilder()
 
@@ -65,95 +60,100 @@ func (c *Connection) Session(user, password string) (response.CouchResult, error
 
 	doc, err := json.Marshal(&body)
 	if err != nil {
-		return response.CouchResult{}, err
+		return nil, err
 	}
 
-	request, err := b.WithEndpoint(endPointSession).WithMethod(request.MethodPost).WithBody(doc).Build(c.ctx)
+	request, err := b.WithEndpoint(endPointSession).WithMethod(request.MethodPost).WithBody(doc).Build(c.cli)
 
 	if err != nil {
-		return response.CouchResult{}, err
+		return nil, err
 	}
 
-	resp, err := request.Execute()
+	rs, err := request.Execute(ctx)
+	c.cli.AuthData = rs.Cookie.Value
 
-	if err != nil {
-		return response.CouchResult{}, err
-	}
-	c.ctx.AuthData = resp.Cookie.Value
-
-	return resp.CouchResult, err
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 }
 
-func (c *Connection) Up() (response.CouchResult, error) {
+//Up - Checks database connection
+func (c *Connection) Up(ctx context.Context) (*response.CouchResult, error) {
 
 	b := request.NewRequestBuilder()
-	rq, err := b.WithEndpoint(endPointUp).WithMethod(request.MethodGet).Build(c.ctx)
+	rq, err := b.WithEndpoint(endPointUp).WithMethod(request.MethodGet).Build(c.cli)
 
 	if err != nil {
-		return response.CouchResult{}, err
+		return nil, err
 	}
 
-	rs, err := rq.Execute()
-	if err == nil {
-		rs.CouchResult[response.ResultMessage] = strings.Trim(string(rs.Body), "\r\n")
+	rs, err := rq.Execute(ctx)
 
-	}
-
-	return rs.CouchResult, err
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 }
 
 //Uuid - Generates uuid
-func (c *Connection) Uuid(count int) (response.CouchResult, error) {
+func (c *Connection) Uuid(ctx context.Context, count int) (*response.CouchResult, error) {
 
 	if count < 0 || count > 1000 {
-		return response.CouchResult{}, errors.New("invallid count parameter")
+		return nil, errors.New("invalid count parameter")
 	}
 
 	b := request.NewRequestBuilder()
 	rq, err := b.WithEndpoint(endPointUuids).WithMethod(request.MethodGet).
 		WithParameters(map[string]string{"count": fmt.Sprintf("%d", count)}).
-		Build(c.ctx)
+		Build(c.cli)
 
 	if err != nil {
-		return response.CouchResult{}, err
+		return nil, err
 	}
 
-	rs, err := rq.Execute()
+	rs, err := rq.Execute(ctx)
 
-	if err == nil {
-		rs.CouchResult[response.ResultMessage] = strings.Trim(string(rs.Body), "\r\n")
-
-	}
-
-	return rs.CouchResult, err
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 }
 
-func (c *Connection) AllDbs() (response.CouchResult, error) {
+//AllDbs - Returns information about all databases
+func (c *Connection) AllDbs(ctx context.Context) (*response.CouchResult, error) {
 
 	b := request.NewRequestBuilder()
-	rq, err := b.WithEndpoint(endPointAllDbs).WithMethod(request.MethodGet).Build(c.ctx)
+	rq, err := b.WithEndpoint(endPointAllDbs).WithMethod(request.MethodGet).Build(c.cli)
 
 	if err != nil {
-		return response.CouchResult{}, err
+		return nil, err
 	}
 
-	rs, err := rq.Execute()
+	rs, err := rq.Execute(ctx)
 
-	return rs.CouchResult, err
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 
 }
 
-func (c *Connection) DbsInfo() (response.CouchResult, error) {
+//DbsInfo - Returns information about specific database
+func (c *Connection) DbsInfo(ctx context.Context, name string) (*response.CouchResult, error) {
 
-	b := request.NewRequestBuilder()
-	request, err := b.WithEndpoint(endPointAllDbs).WithMethod(request.MethodGet).Build(c.ctx)
-
-	if err != nil {
-		return response.CouchResult{}, err
+	if name == "" {
+		return nil, errors.New("db name required")
 	}
 
-	response, err := request.Execute()
+	body := map[string][]string{
+		"keys": []string{name},
+	}
 
-	return response.CouchResult, err
+	doc, err := json.Marshal(&body)
+	if err != nil {
+		return nil, err
+	}
+
+	b := request.NewRequestBuilder()
+	request, err := b.WithEndpoint(endPointDbsInfo).WithMethod(request.MethodPost).
+		WithBody(doc).
+		Build(c.cli)
+
+	if err != nil {
+		return nil, err
+	}
+
+	rs, err := request.Execute(ctx)
+
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 
 }

@@ -1,4 +1,4 @@
-package context
+package client
 
 import (
 	"net/http"
@@ -24,8 +24,8 @@ const (
 	JwtToken AuthType = "JWT"
 )
 
-//CouchContext - Holds connection
-type CouchContext struct {
+//CouchClient - Holds connection data
+type CouchClient struct {
 	BaseAddr       string
 	isSecure       bool
 	Authentication AuthType

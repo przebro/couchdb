@@ -2,13 +2,13 @@ package request
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
-	"github.com/przebro/couchdb/context"
+	"github.com/przebro/couchdb/client"
 	"github.com/przebro/couchdb/response"
 )
 
@@ -22,6 +22,8 @@ const (
 	MethodPut    CouchMethod = http.MethodPut
 	MethodPost   CouchMethod = http.MethodPost
 	MethodDelete CouchMethod = http.MethodDelete
+	//Nonstandard http method used by copy endpoint
+	MethodCopy CouchMethod = "COPY"
 
 	StatusCode200OK           = 200
 	StatusCode304NotModified  = 304
@@ -41,49 +43,67 @@ type CouchRequest struct {
 }
 
 //Execute - executes request
-func (req *CouchRequest) Execute() (response.CouchResponse, error) {
+func (req *CouchRequest) Execute(ctx context.Context) (response.CouchResponse, error) {
 
-	var err error
-	couchResponse := response.CouchResponse{CouchResult: make(map[response.ResultKey]interface{})}
-	req.request.Body.Close()
-
-	resp, err := req.cli.Do(req.request)
-
-	//Something really bad happen
-	if err != nil {
-		return couchResponse, err
-	}
-
-	couchResponse.CouchResult[response.ResponseStatusCode] = resp.StatusCode
-	couchResponse.CouchResult[response.ResponseStatus] = resp.Status
-	couchResponse.CouchResult[response.ResponseServer] = resp.Header.Get("Server")
-
-	couchResponse.Body = readBody(resp)
-	if resp.StatusCode >= StatusCode400BadRequest {
-
-		return couchResponse, fmt.Errorf("%s:%v;", errRequest, strings.Trim(string(couchResponse.Body), "\r\n"))
-	}
-
-	ck := resp.Cookies()
-
-	if len(ck) > 0 {
-		couchResponse.Cookie = *ck[0]
-	}
-
-	return couchResponse, nil
-}
-
-func readBody(r *http.Response) []byte {
 	var err error = nil
-	var num int
-	buffer := make([]byte, 1024)
-	data := make([]byte, 0)
-	for err != io.EOF {
-		num, err = r.Body.Read(buffer)
-		data = append(data, buffer[0:num]...)
+	var couchResponse response.CouchResponse
+
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	return data
+	req.request.Body.Close()
+	req.request = req.request.WithContext(ctx)
+
+	rc, e := req.execute(req.request)
+
+	select {
+	case couchResponse = <-rc:
+		{
+		}
+	case err = <-e:
+		{
+		}
+
+	case <-ctx.Done():
+		{
+			err = ctx.Err()
+		}
+
+	}
+
+	return couchResponse, err
+}
+func (req *CouchRequest) execute(rq *http.Request) (<-chan response.CouchResponse, <-chan error) {
+
+	ch := make(chan response.CouchResponse, 1)
+	e := make(chan error, 1)
+	go func(<-chan response.CouchResponse, <-chan error) {
+
+		rs, err := req.cli.Do(rq)
+
+		if err != nil {
+			e <- err
+			return
+		}
+
+		couchResponse := response.CouchResponse{CouchStatus: &response.CouchStatus{}}
+		couchResponse.Code = rs.StatusCode
+		couchResponse.Status = rs.Status
+		couchResponse.Server = rs.Header.Get("Server")
+		couchResponse.Rdr = rs.Body
+
+		ck := rs.Cookies()
+
+		if len(ck) > 0 {
+			couchResponse.Cookie = *ck[0]
+		}
+
+		ch <- couchResponse
+
+	}(ch, e)
+
+	return ch, e
 }
 
 //Builder - Helps build a new CouchDB request
@@ -91,14 +111,16 @@ type Builder interface {
 	WithBody(doc []byte) Builder
 	WithMethod(method CouchMethod) Builder
 	WithParameters(params map[string]string) Builder
+	WithHeaders(headers map[string]string) Builder
 	WithEndpoint(endpoint string) Builder
-	Build(conn *context.CouchContext) (*CouchRequest, error)
+	Build(conn *client.CouchClient) (*CouchRequest, error)
 }
 
 type requestBuilder struct {
 	endpoint string
 	method   CouchMethod
 	params   map[string]string
+	headers  map[string]string
 	body     []byte
 }
 
@@ -118,8 +140,18 @@ func (rb *requestBuilder) WithMethod(method CouchMethod) Builder {
 	return rb
 
 }
-func (rb *requestBuilder) WithParameters(params map[string]string) Builder {
+func (rb *requestBuilder) WithHeaders(headers map[string]string) Builder {
+	if headers == nil {
+		return rb
+	}
+	rb.headers = headers
+	return rb
+}
 
+func (rb *requestBuilder) WithParameters(params map[string]string) Builder {
+	if params == nil {
+		return rb
+	}
 	rb.params = params
 	return rb
 }
@@ -128,13 +160,13 @@ func (rb *requestBuilder) WithEndpoint(endpoint string) Builder {
 	rb.endpoint = endpoint
 	return rb
 }
-func (rb *requestBuilder) Build(ctx *context.CouchContext) (*CouchRequest, error) {
+func (rb *requestBuilder) Build(cli *client.CouchClient) (*CouchRequest, error) {
 
 	var err error
 	var method string
 
 	switch rb.method {
-	case MethodDelete, MethodGet, MethodPost, MethodPut, MethodHead:
+	case MethodDelete, MethodGet, MethodPost, MethodPut, MethodHead, MethodCopy:
 		{
 			method = string(rb.method)
 		}
@@ -144,7 +176,7 @@ func (rb *requestBuilder) Build(ctx *context.CouchContext) (*CouchRequest, error
 		}
 	}
 
-	endp := fmt.Sprintf(`%s/%s`, ctx.BaseAddr, rb.endpoint)
+	endp := fmt.Sprintf(`%s/%s`, cli.BaseAddr, rb.endpoint)
 
 	if rb.params != nil {
 		params := []string{}
@@ -156,7 +188,7 @@ func (rb *requestBuilder) Build(ctx *context.CouchContext) (*CouchRequest, error
 	}
 
 	r := &CouchRequest{}
-	r.cli = ctx.Client
+	r.cli = cli.Client
 
 	bodyRdr := bytes.NewReader(rb.body)
 	r.request, err = http.NewRequest(method, endp, bodyRdr)
@@ -167,17 +199,21 @@ func (rb *requestBuilder) Build(ctx *context.CouchContext) (*CouchRequest, error
 
 	r.request.Header.Add("Content-Type", "application/json")
 
-	if ctx.Authentication == context.JwtToken {
-		data := fmt.Sprintf("Bearer %s", ctx.AuthData)
+	if cli.Authentication == client.JwtToken {
+		data := fmt.Sprintf("Bearer %s", cli.AuthData)
 		r.request.Header.Add("Authorization", data)
 	}
-	if ctx.Authentication == context.Basic {
-		data := fmt.Sprintf("Basic %s", ctx.AuthData)
+	if cli.Authentication == client.Basic {
+		data := fmt.Sprintf("Basic %s", cli.AuthData)
 		r.request.Header.Add("Authorization", data)
 	}
 
-	if ctx.Authentication == context.Cookie {
-		ck := &http.Cookie{Name: "AuthSession", Value: ctx.AuthData}
+	for k, v := range rb.headers {
+		r.request.Header.Add(k, v)
+	}
+
+	if cli.Authentication == client.Cookie {
+		ck := &http.Cookie{Name: "AuthSession", Value: cli.AuthData}
 		r.request.AddCookie(ck)
 	}
 

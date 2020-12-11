@@ -1,1 +1,4 @@
 coverage.out
+docker/etc/*
+!docker/etc/local.ini
+!docker/etc/docker.ini
