@@ -80,7 +80,7 @@ func TestCreateDatabase(t *testing.T) {
 		t.Error("Unexpected result")
 	}
 	result, db, err = CreateDatabase(context.Background(), database, conn.GetClient())
-	if err != nil {
+	if err == nil {
 		t.Error("unexpected result")
 	}
 
@@ -99,7 +99,7 @@ func TestGetDatabase(t *testing.T) {
 
 	r, _, err := GetDatabsase(context.Background(), "db_that_does_not_exists", conn.GetClient())
 
-	if err != nil {
+	if err == nil {
 		t.Error("Unexpected result")
 	}
 
@@ -217,26 +217,25 @@ func TestSelectDocument(t *testing.T) {
 
 	docs := []TestDocument{}
 
-	result.All(&docs)
+	result.All(context.Background(), &docs)
 
 	if len(docs) == 1 {
 		t.Error("unexpected result")
 	}
 
-	expr = `{ "_id" : "test_document_id_01" }`
+	expr = `{"_id": "test_document_id_01"}`
+	docs = []TestDocument{}
 
-	result, err = database.Select(context.Background(), expr, nil, nil)
+	result, err = database.Select(context.Background(), expr, nil, map[FindOption]interface{}{OptionStat: true})
 	if err != nil {
 		t.Error(err)
 	}
 
-	result.All(&docs)
+	result.All(context.Background(), &docs)
 
 	if len(docs) != 1 {
-
-		t.Error("unexpected result")
+		t.Error("unexpected result, actual:", len(docs))
 	}
-
 }
 
 func TestGetSingleDocument(t *testing.T) {
@@ -533,20 +532,24 @@ func TestSelectIterator(t *testing.T) {
 		t.Error(err)
 	}
 
-	r, err := db.Select(context.Background(), "{}", nil, nil)
+	r, err := db.Select(context.Background(), "{}", nil, map[FindOption]interface{}{OptionStat: true})
 	if err != nil {
 		t.Error(err)
 	}
 
-	for {
+	cnt := 0
+	result := r.Meta()
+
+	for r.Next(context.Background()) {
 		td := TestDocument{}
-		err := r.Next(&td)
+		err := r.Decode(&td)
 		if err != nil {
 			break
 		}
-		fmt.Println(td)
+		cnt++
 	}
 
-	result := r.Meta()
-	fmt.Println(result)
+	if result.Documents != cnt {
+		t.Error("unexpected result, expected:", result.Documents, "actual:", cnt)
+	}
 }

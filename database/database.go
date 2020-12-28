@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/przebro/couchdb/client"
@@ -28,6 +29,10 @@ func CreateDatabase(ctx context.Context, name string, cli *client.CouchClient) (
 
 	}
 
+	if rs.Code >= response.StatusCode400BadRequest {
+		err = errors.New(rs.Status)
+	}
+
 	return response.NewResult(rs.CouchStatus, rs.Rdr), database, err
 }
 
@@ -37,17 +42,21 @@ func GetDatabsase(ctx context.Context, name string, cli *client.CouchClient) (*r
 	var database CouchDatabase
 	builder := request.NewRequestBuilder()
 
-	request, err := builder.WithMethod(request.MethodGet).WithEndpoint(name).Build(cli)
+	rq, err := builder.WithMethod(request.MethodGet).WithEndpoint(name).Build(cli)
 	if err != nil {
 		return nil, database, err
 	}
-	rs, err := request.Execute(ctx)
+	rs, err := rq.Execute(ctx)
 
 	if err == nil {
 		database.cli = cli
 		database.Name = name
-
 	}
+
+	if rs.Code == response.StatusCode404NotFound {
+		err = errors.New(rs.Status)
+	}
+
 	return response.NewResult(rs.CouchStatus, rs.Rdr), database, err
 
 }
@@ -69,6 +78,10 @@ func (db *CouchDatabase) Get(ctx context.Context, id string) (*response.CouchRes
 
 	rs, err := request.Execute(ctx)
 
+	if rs.Code >= response.StatusCode400BadRequest {
+		err = errors.New(rs.Status)
+	}
+
 	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 }
 
@@ -83,11 +96,15 @@ func (db *CouchDatabase) Stat(ctx context.Context) (*response.CouchResult, error
 	}
 	rs, err := request.Execute(ctx)
 
+	if rs.Code >= response.StatusCode400BadRequest {
+		err = errors.New(rs.Status)
+	}
+
 	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 }
 
-//Select - Selects documents from database
-func (db *CouchDatabase) Select(ctx context.Context, sel string, fld []string, opt map[string]string) (*response.CouchMultiResult, error) {
+//Select - Selects documents from the database.
+func (db *CouchDatabase) Select(ctx context.Context, sel string, fld []string, opt map[FindOption]interface{}) (*response.CouchMultiResult, error) {
 
 	if sel == "" {
 		return nil, errNilSelector
@@ -97,20 +114,26 @@ func (db *CouchDatabase) Select(ctx context.Context, sel string, fld []string, o
 		Fields:   fld,
 	}
 
-	selct, err := json.Marshal(query)
+	db.setFindOptions(&query, opt)
+
+	body, err := json.Marshal(query)
 
 	endpoint := fmt.Sprintf("%s/%s", db.Name, endPointFind)
 	rqb := request.NewRequestBuilder()
 
-	request, err := rqb.WithEndpoint(endpoint).WithMethod(request.MethodPost).WithBody(selct).Build(db.cli)
+	rq, err := rqb.WithEndpoint(endpoint).WithMethod(request.MethodPost).WithBody(body).Build(db.cli)
+
 	if err != nil {
 		return nil, err
 	}
 
-	rs, err := request.Execute(ctx)
+	rs, err := rq.Execute(ctx)
 
-	return response.NewMultiResult(rs.CouchStatus, rs.Rdr, &selectCursor{rdr: rs.Rdr}), err
+	if rs.Code >= response.StatusCode400BadRequest {
+		err = errors.New(rs.Status)
+	}
 
+	return response.NewMultiResult(rs.CouchStatus, newBufferedCursor(rs.Rdr, endpoint, query, db.cli)), err
 }
 
 //Insert - Inserts a new document to databsase
@@ -138,8 +161,11 @@ func (db *CouchDatabase) Insert(ctx context.Context, doc interface{}) (*response
 	if err != nil {
 		return nil, err
 	}
-
 	rs, err := rq.Execute(ctx)
+
+	if rs.Code >= response.StatusCode400BadRequest {
+		err = errors.New(rs.Status)
+	}
 
 	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 
@@ -170,6 +196,10 @@ func (db *CouchDatabase) InsertMany(ctx context.Context, docs []interface{}) (*r
 	}
 
 	rs, err := rq.Execute(ctx)
+
+	if rs.Code >= response.StatusCode400BadRequest {
+		err = errors.New(rs.Status)
+	}
 
 	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 }
@@ -218,6 +248,11 @@ func (db *CouchDatabase) Update(ctx context.Context, doc interface{}) (*response
 	}
 
 	rs, err := rq.Execute(ctx)
+
+	if rs.Code >= response.StatusCode400BadRequest {
+		err = errors.New(rs.Status)
+	}
+
 	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 }
 
@@ -240,6 +275,11 @@ func (db *CouchDatabase) Delete(ctx context.Context, id, rev string) (*response.
 	}
 
 	rs, err := rq.Execute(ctx)
+
+	if rs.Code >= response.StatusCode400BadRequest {
+		err = errors.New(rs.Status)
+	}
+
 	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 
 }
@@ -274,6 +314,10 @@ func (db *CouchDatabase) Copy(ctx context.Context, id, destID, destREV string) (
 
 	rs, err := rq.Execute(ctx)
 
+	if rs.Code >= response.StatusCode400BadRequest {
+		err = errors.New(rs.Status)
+	}
+
 	return response.NewResult(rs.CouchStatus, rs.Rdr), err
 
 }
@@ -307,5 +351,41 @@ func (db *CouchDatabase) Purge(ctx context.Context, id string, rev []string) (*r
 
 	rs, err := rq.Execute(ctx)
 
+	if rs.Code >= response.StatusCode400BadRequest {
+		err = errors.New(rs.Status)
+	}
+
 	return response.NewResult(rs.CouchStatus, rs.Rdr), err
+}
+
+func (db *CouchDatabase) setFindOptions(s *DataSelector, opt map[FindOption]interface{}) {
+
+	for k, v := range opt {
+		switch k {
+		case OptionBookmark:
+			{
+				if val, ok := v.(string); ok {
+					s.Bookmark = val
+				}
+			}
+		case OptionLimit:
+			{
+				if val, ok := v.(int); ok {
+					s.Limit = val
+				}
+			}
+		case OptionStat:
+			{
+				if val, ok := v.(bool); ok {
+					s.Stats = val
+				}
+			}
+		case OptionIndex:
+			{
+				if val, ok := v.(string); ok {
+					s.Index = val
+				}
+			}
+		}
+	}
 }

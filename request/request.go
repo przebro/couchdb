@@ -24,12 +24,6 @@ const (
 	MethodDelete CouchMethod = http.MethodDelete
 	//Nonstandard http method used by copy endpoint
 	MethodCopy CouchMethod = "COPY"
-
-	StatusCode200OK           = 200
-	StatusCode304NotModified  = 304
-	StatusCode400BadRequest   = 400
-	StatusCode400Unauthorized = 401
-	StatusCode400NotFound     = 404
 )
 
 var (

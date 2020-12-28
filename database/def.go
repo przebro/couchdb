@@ -7,11 +7,18 @@ import (
 	"github.com/przebro/couchdb/client"
 )
 
+type FindOption string
+
 const (
 	endPointFind     = "_find"
 	endPointBulk     = "_bulk_docs"
 	endPointPurge    = "_purge"
 	endPointSecurity = "_security"
+
+	OptionStat     FindOption = "stat"
+	OptionBookmark FindOption = "bookmark"
+	OptionLimit    FindOption = "limit"
+	OptionIndex    FindOption = "index"
 )
 
 var (
@@ -42,6 +49,7 @@ type DataSelector struct {
 	Limit    int             `json:"limit,omitempty"`
 	Bookmark string          `json:"bookmark,omitempty"`
 	Index    string          `json:"use_index,omitempty"`
+	Stats    bool            `json:"execution_stats,omitempty"`
 }
 
 //CouchDatabase - Represents a CouchDB database

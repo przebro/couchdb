@@ -9,6 +9,16 @@ import (
 	"github.com/przebro/couchdb/cursor"
 )
 
+const (
+	StatusCode200OK                 = 200
+	StatusCode304NotModified        = 304
+	StatusCode400BadRequest         = 400
+	StatusCode401Unauthorized       = 401
+	StatusCode404NotFound           = 404
+	StatusCode409Conflict           = 409
+	StatusCode412PreconditionFailed = 412
+)
+
 //CouchStatus  - Contains http response status and additional info
 type CouchStatus struct {
 	Code   int
@@ -42,14 +52,13 @@ func (r *CouchResult) Decode(v interface{}) error {
 //multiple objects like a result of a _find
 type CouchMultiResult struct {
 	*CouchStatus
-	rdr io.ReadCloser
 	cursor.ResultCursor
 }
 
 //NewMultiResult - Creates a new CouchMultiResult
-func NewMultiResult(status *CouchStatus, rdr io.ReadCloser, crsr cursor.ResultCursor) *CouchMultiResult {
+func NewMultiResult(status *CouchStatus, crsr cursor.ResultCursor) *CouchMultiResult {
 
-	return &CouchMultiResult{CouchStatus: status, rdr: rdr, ResultCursor: crsr}
+	return &CouchMultiResult{CouchStatus: status, ResultCursor: crsr}
 
 }
 
