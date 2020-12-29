@@ -61,6 +61,24 @@ func GetDatabsase(ctx context.Context, name string, cli *client.CouchClient) (*r
 
 }
 
+//DropDatabase - Removes database
+func DropDatabase(ctx context.Context, name string, cli *client.CouchClient) (*response.CouchResult, error) {
+
+	builder := request.NewRequestBuilder()
+
+	rq, err := builder.WithMethod(request.MethodDelete).WithEndpoint(name).Build(cli)
+	if err != nil {
+		return nil, err
+	}
+	rs, err := rq.Execute(ctx)
+
+	if rs.Code >= response.StatusCode400BadRequest {
+		err = errors.New(rs.Status)
+	}
+
+	return response.NewResult(rs.CouchStatus, rs.Rdr), err
+}
+
 //Get - Gets a single document with given id
 func (db *CouchDatabase) Get(ctx context.Context, id string) (*response.CouchResult, error) {
 
