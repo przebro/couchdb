@@ -98,7 +98,6 @@ func (s *bufferedCursor) Next(ctx context.Context) bool {
 	}
 
 	return true
-
 }
 
 func (s *bufferedCursor) Decode(v interface{}) error {
@@ -108,7 +107,10 @@ func (s *bufferedCursor) Decode(v interface{}) error {
 func (s *bufferedCursor) Meta() cursor.QueryMeta {
 	return s.meta
 }
-func (s *bufferedCursor) Close() error {
+func (s *bufferedCursor) Close(ctx context.Context) error {
+	s.resultset = nil
+	s.cli = nil
+	s.dec = nil
 
 	return nil
 }
@@ -130,6 +132,10 @@ func (s *bufferedCursor) fetchNextResultset(ctx context.Context) bool {
 		return false
 	}
 	doc, err := getResultset(r.Rdr)
+
+	if err != nil {
+		return false
+	}
 
 	s.resultset = doc.Data
 	s.meta = cursor.QueryMeta{Bookmark: doc.Bookmark, Documents: 0, Warning: doc.Warning}

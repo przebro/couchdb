@@ -22,5 +22,5 @@ type ResultCursor interface {
 	//Meta - returns meta information for current resultset. At least a bookmark is guaranteed to be present in meta
 	Meta() QueryMeta
 	//Close closes cursor
-	Close() error
+	Close(ctx context.Context) error
 }

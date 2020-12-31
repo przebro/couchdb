@@ -554,6 +554,24 @@ func TestSelectIterator(t *testing.T) {
 	}
 }
 
+func TestCloseCrsr(t *testing.T) {
+	_, db, err := GetDatabsase(context.Background(), database, conn.GetClient())
+	if err != nil {
+		t.Error(err)
+	}
+
+	r, err := db.Select(context.Background(), "{}", nil, map[FindOption]interface{}{OptionStat: true})
+	if err != nil {
+		t.Error(err)
+	}
+
+	err = r.Close(context.Background())
+	if err != nil {
+		t.Error("Unexpected result:", err)
+	}
+
+}
+
 func TestGetSecurity(t *testing.T) {
 
 	_, database, err := GetDatabsase(context.Background(), database, conn.GetClient())
