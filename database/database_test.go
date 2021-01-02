@@ -178,8 +178,10 @@ func TestRevision(t *testing.T) {
 
 	rr := map[string]interface{}{}
 
-	errx := result.Decode(&rr)
-	fmt.Println("RRL:", rr, errx)
+	err = result.Decode(&rr)
+	if err != nil {
+		t.Error("unexpected result")
+	}
 
 	result, err = database.Revision(context.Background(), "test_document_id_03")
 

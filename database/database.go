@@ -228,7 +228,7 @@ func (db *CouchDatabase) Revision(ctx context.Context, id string) (*response.Cou
 	endpoint := fmt.Sprintf("%s/%s", db.Name, id)
 	rqb := request.NewRequestBuilder()
 
-	rq, err := rqb.WithEndpoint(endpoint).WithParameters(map[string]string{"revs": "true"}).
+	rq, err := rqb.WithEndpoint(endpoint).WithParameters(map[string]string{"revs_info=true": "true"}).
 		WithMethod(request.MethodGet).Build(db.cli)
 	if err != nil {
 		return nil, err
